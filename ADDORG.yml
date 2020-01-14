@@ -1,0 +1,11 @@
+---
+
+- name: Add UCS Organization
+  ucs_org:
+    hostname: 192.168.219.134
+    username: admin
+    password: password
+    org_name: test
+    description: testing org
+    state: present
+    delegate_to: localhost
