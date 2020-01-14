@@ -1,0 +1,242 @@
+#!/usr/bin/env python3
+'''
+    Script to add multiple PGs to multiple hosts of vsphere
+
+'''
+
+from __future__ import print_function
+from pyVim.connect import SmartConnect, SmartConnectNoSSL, Disconnect
+from pyVmomi import vim
+import atexit
+import sys
+import argparse
+import re
+import getpass
+from time import sleep
+import socket
+import errno
+
+        
+def GetVMHosts(content, regex_esxi=None):
+    host_view = content.viewManager.CreateContainerView(content.rootFolder,
+                                                        [vim.HostSystem],
+                                                        True)
+    obj = [host for host in host_view.view]
+    match_obj = []
+    if regex_esxi:
+        for esxi in obj:
+            if re.findall(r'%s.*' % regex_esxi, esxi.name):
+                match_obj.append(esxi)
+        match_obj_name = [match_esxi.name for match_esxi in match_obj]
+        print("Matched ESXi hosts: %s" % match_obj_name)
+        host_view.Destroy()
+        return match_obj
+    else:
+        host_view.Destroy()
+        return obj
+
+
+def AddHostsPortgroup(hosts, vswitchName, portgroupName, vlanId):
+    for host in hosts:
+        AddHostPortgroup(host, vswitchName, portgroupName, vlanId)
+
+
+def AddHostPortgroup(host, vswitchName, portgroupName, vlanId):
+    portgroup_spec = vim.host.PortGroup.Specification()
+    portgroup_spec.vswitchName = vswitchName
+    portgroup_spec.name = portgroupName
+    portgroup_spec.vlanId = int(vlanId)
+    network_policy = vim.host.NetworkPolicy()
+    network_policy.security = vim.host.NetworkPolicy.SecurityPolicy()
+    network_policy.security.allowPromiscuous = True
+    network_policy.security.macChanges = False
+    network_policy.security.forgedTransmits = False
+    portgroup_spec.policy = network_policy
+
+    host.configManager.networkSystem.AddPortGroup(portgroup_spec)
+
+
+def getHosts(): #method to enter the node's ip
+    list = [] #list to save the ip typed
+    rightAdd = [] #list to save the righ IP
+    wrongAdd = [] #list to save the wrong IP
+    print("Script to add any portgroup to any host")
+    print('Arguments for talking to vSphere')
+    print("To finish of enter values, enter a 'q'")
+    print("Type the  node's IP list")
+    while True: # infinite loop to enter the node's IP
+        inAdd = input('\033[1;35;40m> \033[0;0m') #type the node's IP and then save into inAdd
+        if inAdd != 'q': # if the value isn't a q pass the next filter
+            if inAdd: #if there's a value so
+                list.append(inAdd) # save the value into list called list
+        else: # if the value typed is a 'q'
+            break #so break
+    for host in list: # loop to go through the list
+        rangeOut = False #variable to know if the range is out
+        rangeIn = False #variable to know if the range is in
+        addOri=host #Address original before split
+        addSpl = host.split('.') #address separe with split()
+        addCant=len(addSpl) #Quantity of octects intp Address
+        if addCant == 4: #if the quantity of octects is equal to 4 so
+            for octe in addSpl: #loop to go through  the split address
+                range = int(octe) >= 0 and int(octe) <= 255 #range defined
+                if range: # if it's true so
+                    rangeIn = True # the range is inside
+                else: #if not
+                    rangeOut = True #the range is outside
+                    break #so break
+            if rangeIn and not rangeOut: #if the range is inside and not outside
+                rightAdd.append(addOri) #save the address into righAdd
+            else: #if not the address is invalid
+                wrongAdd.append(addOri) #save the wrong address into wrongAdd
+        else: # if not
+            wrongAdd.append(addOri) #save the address into wrongAdd in the first validation
+    if wrongAdd:
+        print("\033[1;33;40mThe wrong ip were:")
+        for  wrong in wrongAdd: #loop to print the wrong IPs
+            print("\033[1;34;40m> \033[0;0m",wrong)
+    if rightAdd:
+        print("\033[1;33;40mThe right IP were:") #loop to print the right IPs
+        for right in rightAdd:
+            print("\033[1;34;40m> \033[0;0m",right)
+    print("\n")
+    return rightAdd #return the righ values
+
+
+def getVMKernel(): #method to add the vmkernels
+    list = [] #list of elements typed
+    wrongAdd=[] #list to save the wrong elements
+    vmkname = [] #list to save only the name of the element typed
+    vmkid = [] #list to save only the ID typed
+    #print("To finish of enter values, enter a 'q'") #press "q" to exit of type element
+    print("\033[1;33;40mEnter PG name and ID separated by a comma [EXAMPLE,10]")
+    while True: #start the  infinite loop
+        inVMK = input("\033[1;35;40m> \033[0;0m") #type the elements
+        if inVMK != "q": #if the the element typed is a "q" leave to type elements
+            if inVMK: #if the element isn't empty
+                list.append(inVMK) # so is saved into "list"
+        else: # if not break the loop
+            break
+    for vmks in list: # loop through the list "list"
+        #vmksline = vmks
+        vmSpl=vmks.split(',') # break the name and id
+        vmCant = len(vmSpl) #quantity of elements separed
+
+
+
+
+
+        if vmCant == 2 and vmSpl[1].isdigit(): #if the quantity of elements separed is two then
+            name = vmSpl[0] # save the name
+            vmkname.append(name) #save the name into vmkname
+            id = vmSpl[1] #save the ID
+            vmkid.append(id) #save the ID into vmkid
+        else: #if not
+            wrongAdd.append(vmks) #save into wrongAdd to then show them
+
+
+
+
+
+
+
+
+
+
+    print("\n")
+    if wrongAdd: #if there are wrong elements
+        print("\033[1;33;40mThe wrong data were: ")
+        for wrong in wrongAdd: #loop to show the wrong elements
+            print("\033[1;34;40m> \033[0;0m",wrong) #show the wrong elements
+    print("\n\033[1;33;40mThe right data were: ")
+    for name,id in zip(vmkname,vmkid): #loop to show right elements
+        print("\033[1;34;40mPG name: \033[0;0m",name,"\n\033[1;34;40mID: \033[0;0m",id,"\n") #,"id is > ",id," and index is > ",vmkname.index(name)," and index of vmkid > ",vmkid.index(id)) #show the right elements                                      print("\n \n")
+        #print("ID >>> ", id,"\n")
+    return vmkname,vmkid #return the values required
+
+def login():
+    user, passwd = input("\033[1;33;40mUsername [root]: \033[0;0m"), getpass.getpass("\033[1;33;40mPassword: ")
+    if not user:
+        user = 'root'
+    return user,passwd
+
+def getvSwitch():
+    vS = input("\033[1;33;40mvswitch name [vSwitch0]:\033[0;0m")
+    if not vS:
+        vS = 'vSwitch0'
+    return vS
+def main():
+    delay1 = .5
+    delay2 = .5
+    delay3 = 1.5
+    try:
+        print("\033[1;33;40m")
+        hosts = getHosts()
+        sleep(delay1)
+        vmkList,IDList = getVMKernel()
+        sleep(delay1)
+        vSwitch = getvSwitch()
+        sleep(delay1)
+        user, passwd = login()
+    except (KeyboardInterrupt, EOFError):
+        print('\033[1;33;40mOperation cancelled.\033[0;0m')
+        sys.exit(0)
+   # for host in hosts:
+    #    print("IP >>> ",host)
+    sleep(delay2)
+    print("\n\n \033[1;33;40m--- Starting Script ---\n")
+    sleep(delay3)
+    for host in hosts:
+        print("----------------------------------------------------------")
+        print("\033[1;33;40mConnecting to the host: [",host,"]")
+        print("----------------------------------------------------------")
+        sleep(1.5)
+        for VMKlocal,IDLocal in zip(vmkList,IDList):
+            try:
+                serviceInstance = SmartConnectNoSSL(host=host,
+                                            user=user,
+                                            pwd=passwd,
+                                            port=443)
+                atexit.register(Disconnect, serviceInstance)
+                content = serviceInstance.RetrieveContent()
+                IPget = GetVMHosts(content, None)
+                AddHostsPortgroup(IPget, vSwitch, VMKlocal, IDLocal)
+                print("\033[1;32;40m --- PG name: [",VMKlocal,"] Applied change\n    ID: [",IDLocal,"]\n")
+            except BlockingIOError:
+                print("\033[1;31;40m Destination host is unreachable")
+                sleep(delay2)
+                break
+            except vim.fault.NotFound:
+                print("\033[1;31;40m The vSwitch with name '"+vSwitch+"'doesn't exist\n")
+                sleep(delay2)
+                break
+            except vim.fault.AlreadyExists:
+                print("\033[1;31;40m --- PG name: [",VMKlocal,"] AlreadyExists\n    ID: [",IDLocal,"]\n")
+                sleep(delay2)
+                continue
+            except vim.fault.InvalidLogin:
+                print("\033[1;31;40m Cannot complete login due to an incorrect user name or password")
+                sleep(delay2)
+                break 
+            #except vim.fault.NotFound as e:
+            #    print("vSwitch NotFound",e)
+            except KeyboardInterrupt:
+                print('\033[0;31;40m operation cancelled.\033[0;0m')
+                sys.exit(0)
+            except Exception as Error:
+                print("\033[0;31;40m Oops! {}",sys.exc_info()[0],"occured. \033[0;0m")
+                print()
+            #except Exception as e:
+            #    print("Unexpected Error message ",e)
+
+            '''content = serviceInstance.RetrieveContent()
+                                                IPget = GetVMHosts(content, None)
+                                                AddHostsPortgroup(IPget, vSwitch, VMKlocal, IDLocal)'''
+            sleep(delay2)
+        sleep(delay3)
+    print("\n \033[1;33;40m --- Ending Script ---\033[0;0m\n")
+    sleep(2.5)
+
+# Main section
+if __name__ == "__main__":
+    sys.exit(main())
