@@ -1,0 +1,173 @@
+#!/usr/bin/env python3
+"""
+DELETE PG FROM ANY HOST
+"""
+from __future__ import print_function
+from pyVim.connect import SmartConnectNoSSL, Disconnect
+from pyVmomi import vim
+import atexit
+import sys
+from time import sleep
+import getpass
+
+
+import argparse
+
+def getHosts(): #method to enter the node's ip
+    list = [] #list to save the ip typed
+    rightAdd = [] #list to save the righ IP
+    wrongAdd = [] #list to save the wrong IP
+    print("Script to delete any portgroup to any host")
+    print('Arguments for talking to vSphere')
+    print("To finish of enter values, enter a 'q'")
+    print("Type the  node's IP list")
+    while True: # infinite loop to enter the node's IP
+        inAdd = input('\033[1;35;40m> \033[0;0m') #type the node's IP and then save into inAdd
+        if inAdd != 'q': # if the value isn't a q pass the next filter
+            if inAdd: #if there's a value so
+                list.append(inAdd) # save the value into list called list
+        else: # if the value typed is a 'q'
+            break #so break
+    for host in list: # loop to go through the list
+        rangeOut = False #variable to know if the range is out
+        rangeIn = False #variable to know if the range is in
+        addOri=host #Address original before split
+        addSpl = host.split('.') #address separe with split()
+        addCant=len(addSpl) #Quantity of octects intp Address
+        if addCant == 4: #if the quantity of octects is equal to 4 so
+            for octe in addSpl: #loop to go through  the split address
+                range = int(octe) >= 0 and int(octe) <= 255 #range defined
+                if range: # if it's true so
+                    rangeIn = True # the range is inside
+                else: #if not
+                    rangeOut = True #the range is outside
+                    break #so break
+            if rangeIn and not rangeOut: #if the range is inside and not outside
+                rightAdd.append(addOri) #save the address into righAdd
+            else: #if not the address is invalid
+                wrongAdd.append(addOri) #save the wrong address into wrongAdd
+        else: # if not
+            wrongAdd.append(addOri) #save the address into wrongAdd in the first validation
+    if wrongAdd:
+        print("\033[1;33;40mThe wrong ip were:")
+        for  wrong in wrongAdd: #loop to print the wrong IPs
+            print("\033[1;34;40m> \033[0;0m",wrong)
+    if rightAdd:
+        print("\033[1;33;40mThe right IP were:") #loop to print the right IPs
+        for right in rightAdd:
+            print("\033[1;34;40m> \033[0;0m",right)
+    print("\n")
+    return rightAdd #return the righ values
+
+
+def getVMKernel(): #method to add the vmkernels
+    pgname = [] #list to save only the name of the element typed
+    #print("To finish of enter values, enter a 'q'") #press "q" to exit of type element
+    print("\033[1;33;40mEnter PG name [EXAMPLE]")
+    while True: #start the  infinite loop
+        inVMK = input("\033[1;35;40m> \033[0;0m") #type the elements
+        if inVMK != "q": #if the the element typed is a "q" leave to type elements
+            if inVMK: #if the element isn't empty
+                pgname.append(inVMK) # so is saved into "pgname"
+        else: # if not break the loop
+            break
+    print("\n")
+    print("\n\033[1;33;40mThe PGs introduced were: ")
+    for name in pgname: #loop to show right elements
+        print("\033[1;34;40mPG name: \033[0;0m",name)
+    return pgname #return the values required
+
+def login():
+    user, passwd = input("\033[1;33;40mUsername [root]: \033[0;0m"), getpass.getpass("\033[1;33;40mPassword: ")
+    if not user:
+        user = 'root'
+    return user,passwd
+
+def GetVMHosts(content, regex_esxi=None):
+    host_view = content.viewManager.CreateContainerView(content.rootFolder,
+                                                        [vim.HostSystem],
+                                                        True)
+    obj = [host for host in host_view.view]
+    match_obj = []
+    if regex_esxi:
+        for esxi in obj:
+            if re.findall(r'%s.*' % regex_esxi, esxi.name):
+                match_obj.append(esxi)
+        match_obj_name = [match_esxi.name for match_esxi in match_obj]
+        print("Matched ESXi hosts: %s" % match_obj_name)
+        host_view.Destroy()
+        return match_obj
+    else:
+        host_view.Destroy()
+        return obj
+
+
+def DelHostsPortgroup(hosts, portgroupName):
+    for host in hosts:
+        host.configManager.networkSystem.RemovePortGroup(portgroupName)
+
+
+def DelHostPortgroup(host, portgroupName):
+    host.configManager.networkSystem.RemovePortGroup(portgroupName)
+
+
+def main():
+    delay1 = .5
+    delay2 = .5
+    delay3 = 1.5
+    try:
+        print("\033[1;33;40m")
+        hosts = getHosts()
+        sleep(delay1)
+        PGList = getVMKernel()
+        sleep(delay1)
+        user, passwd = login()
+    except (KeyboardInterrupt, EOFError):
+        print('\033[1;33;40mOperation cancelled.\033[0;0m')
+        sys.exit(0)
+
+    sleep(delay2)
+    print("\n\n \033[1;33;40m--- Starting Script ---\n")
+    sleep(delay3)
+    for host in hosts:
+        print("----------------------------------------------------------")
+        print("\033[1;33;40mConnecting to the host: [",host,"]")
+        print("----------------------------------------------------------")
+        sleep(1.5)
+        for pglocal in PGList:
+            try:
+                serviceInstance = SmartConnectNoSSL(host=host,
+                                            user=user,
+                                            pwd=passwd,
+                                            port=443)
+                atexit.register(Disconnect, serviceInstance)
+                content = serviceInstance.RetrieveContent()
+                IPget = GetVMHosts(content, None)
+                DelHostsPortgroup(IPget,pglocal)
+                print("\033[1;32;40m --- PG name: [",pglocal,"] removed\n")
+            except BlockingIOError:
+                print("\033[1;31;40m Destination host is unreachable")
+                sleep(delay2)
+                break
+            except vim.fault.NotFound:
+                print("\033[1;31;40m --- PG name: [",pglocal,"] NotExists\n")
+                sleep(delay2)
+                continue
+            except vim.fault.InvalidLogin:
+                print("\033[1;31;40m Cannot complete login due to an incorrect user name or password")
+                sleep(delay2)
+                break 
+            except KeyboardInterrupt:
+                print('\033[0;31;40m operation cancelled.\033[0;0m')
+                sys.exit(0)
+            except Exception as Error:
+                print("\033[0;31;40m Oops! {}",sys.exc_info()[0],"occured. \033[0;0m")
+                print()
+            sleep(delay2)
+        sleep(delay3)
+    print("\n \033[1;33;40m --- Ending Script ---\033[0;0m\n")
+    sleep(2.5)
+
+# Main section
+if __name__ == "__main__":
+    sys.exit(main())
